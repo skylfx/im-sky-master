@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+      <title>IM通信</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <!-- 引入vue-->
+      <script src="https://unpkg.com/vue/dist/vue.js"></script>
+      <!-- 引入elmentUI样式 -->
+      <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+      <!-- 引入elmentUI组件库 -->
+      <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+        <!-- vue不方便的地方或者不支持的采用jquery-->
+      <script src="https://cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script>
+        <!-- 实现websocket客户端 sockjs websocket兼容性js  stomp一种简单的面向文本的消息传递协议-->
+      <script src="https://cdn.bootcss.com/sockjs-client/1.1.4/sockjs.min.js"></script>
+      <script src="https://cdn.bootcss.com/stomp.js/2.3.3/stomp.min.js"></script>
+    <!-- 实现数据的base64转码 -->
+    <script src="/js/jquery.base64.js"></script>
+    <!-- 解决vue兼容性的引入 -->
+    <script src="https://cdn.bootcss.com/babel-polyfill/7.4.4/polyfill.min.js"></script>
+</head>
+<body>
+<div id="app">
+<!--TO el对话框 选择登录成功后后隐藏-->
+<el-dialog
+        title="登录"
+        :visible.sync="dialogVisible"
+        width="500px" :close-on-click-modal="false" :show-close="false">
+  <span>用户名称：</span>
+  <el-select v-model="cUserNmae" placeholder="请选择登录用户" style="width: 260px">
+    <el-option
+            v-for="item in users"
+            :key="item.name"
+            :label="item.name"
+            :value="item.name" v-if="item.name!=='机器人'">
+    </el-option>
+  </el-select>
+  <span slot="footer" class="dialog-footer">
+  <el-button type="primary" @click="login">确 定</el-button>
+</span>
+</el-dialog>
+<!--TO el-flex布局 居中对齐-->
+<el-row type="flex" class="row-bg" justify="center" :gutter="20" v-if="!dialogVisible">
+  <el-col :span="6">
+      <el-alert
+              title="基于websocket的即时通信（websocket、stomp、vue、elementui等）"
+              type="success">
+      </el-alert>
+      <el-divider></el-divider>
+      <el-card class="box-card">
+        <!--当前用户-->
+        <div slot="header" class="clearfix">
+            <i class="el-icon-chat-dot-round"></i>
+            <span>当前用户：</span>
+            <span v-text="cUserNmae"></span>
+          <el-button  type="text" size="medium " @click="dislogin">注销</el-button>
+
+          <i class="el-icon-success" style="font-size: 14px;color: blue;;margin-top: 10px;float: right" v-if="cUserOnline">在线</i>
+          <i class="el-icon-error"  style="font-size: 14px;;float: right;margin-top: 10px;"  v-else>离线</i>
+        </div>
+        <!--用户列表-->
+        <ul style="list-style:none;font-size: 14px;margin-bottom: 20px;">
+            <template  v-for="(item, index) in users" >
+            <li v-if="item.name==cUserNmae" style="color: red;height: 30px;display: none">
+                <i class="el-icon-user-solid" style=""></i>
+                <span v-text="item.name"></span>
+                <i class="el-icon-success" style="float: right">在线</i>
+            </li>
+          <li v-else-if="item.online"  style="color: blue;height: 30px;" @click="privateChatSel(item,index)">
+            <i class="el-icon-user-solid" style="float: left"></i>
+              <span v-text="item.name" style="text-decoration: underline"></span>
+            <i class="el-icon-success" style="float: right" v-if="item.online">在线</i>
+          </li>
+          <li v-else style="color: gray;height: 30px;">
+            <i class="el-icon-user-solid" style="float: left"></i>
+              <span v-text="item.name"></span>
+            <i class="el-icon-error" style="float: right">离线</i>
+          </li>
+            </template>
+        </ul>
+          <!--TO 群聊复选发起-->
+          <div style="padding: 20px;">
+              <el-select v-model="manyUser" multiple placeholder="请选择" size="small">
+                  <template  v-for="item in users">
+                  <el-option
+                          :key="item.name"
+                          :label="item.name"
+                          :value="item.name" v-if="item.name!=cUserNmae&&item.online==true">
+                  </el-option>
+                  </template>
+              </el-select>
+              <el-button type="text" icon="el-icon-add" @click="manyChatSel()" size="small">发起群聊</el-button>
+          </div>
+       </el-card>
+      <el-alert
+              title="建议谷歌浏览器试用"
+              type="success">
+      </el-alert>
+  </el-col>
+    <el-col :span="10" >
+        <!--TO 对话窗口列表-->
+        <el-tabs v-model="activeName" type="border-card" v-if="chatUsers.length>0" @tab-click="handleTabClick" >
+            <el-tab-pane :name="item.name"  :label="item.name"   :key="item.name"  v-for="(item,index) in chatUsers">
+                <span slot="label">
+                    <!--TO 当有新消息 红色提醒-->
+                    <i v-if="item.newNum>0" style="margin-left: 5px;width:8px;height:8px;border-radius:50%;background-color:red;display: inline-block"></i>
+                    <span v-text="item.name"></span>
+                    <!--TO 自定义的关闭时间 click.stop 实现了防止冒泡执行tab本身的click-->
+                     <i class="el-icon-circle-close" style="display: inline-block" @click.stop="closeChat(item)"></i>
+                </span>
+            <el-card class="box-card"  style="font-size: 14px">
+           <!--TO  私聊对话窗口窗口-->
+            <div slot="header" class="clearfix">与<span v-text="item.name "></span>对话</div>
+            <div style="height: 260px;overflow-y: auto;" class="el-card__header">
+                <!--TO  循环显示该对话的下message-->
+                <div v-for="(item1,index1) in item.messages">
+                    <div  v-if="item1.name==cUserNmae" style="float: left;width: 100%;height: 30px;color: red">   <span v-text="cUserNmae"></span> <span v-text="item1.date"></span></div>
+                    <div  v-else style="float: right;width: 100%;height: 30px">   <span v-text="item1.name"></span><span v-text="item1.date"></span></div>
+                    <!--TO  通过v-html显示富文本message-->
+                    <div v-html="formatContent(item1.content)" style="display: block;"  class="el-alert el-alert--success is-light" v-if="item1.name!='机器人'&&item1.receiver!='机器人'"></div>
+                    <div v-html="item1.content" style="display: block;" class="el-alert el-alert--success is-light" v-else></div>
+                </div>
+            </div>
+            <div style="padding: 10px;">
+                <!--TO 自实现的简易富文本维护 -->
+                <div style="font-size: 20px;color: #0600ff;display: block;padding-bottom: 20px">
+                    <!--TO click.prevent 防止焦点丢失 补充common.js的方法实现 -->
+                    <i id= 'emoijT' class="el-icon-eleme" @click.prevent="emojiTest(index)"></i>
+                    <i class="el-icon-picture-outline"> <input :id="getFileId(index)"  type="file" @change="fileC(index)" class="fileclass"/></i>
+                </div>
+                <!--TO  待发送内容文本框  动态ID生成，默认焦点指令 -->
+                <!--<el-input :id="getEditor(index)" v-model="chatUsers[index].content" placeholder="请输入内容" style="width: 80%"></el-input>-->
+                <div :id="getEditorId(index)"   contenteditable="true" style="height: 80px;border: 1px #4464e0 solid;padding-bottom: 10px;margin-bottom: 10px;overflow: auto;" v-focus></div>
+                <el-button type="primary" icon="el-icon-chat-line-round" @click="sendOne(index)">发送</el-button>
+            </div>
+        </el-card>
+        </el-tab-pane>
+        </el-tabs>
+    </el-col>
+  <el-col :span="4"><img id="tempimg" src="" style="width: 100px;display: none"/> </el-col>
+</el-row>
+</div>
+</body>
+<style>
+    body{
+        background-color: #f9fafc;
+        padding: 10px;
+    }
+    .fileclass {
+        display: block;
+        margin: -20px 0 0 0;
+        opacity: 0;
+        width: 20px;
+        height: 20px;
+    }
+</style>
+<!--TO 关于焦点获取切换等的js-->
+<script src="/js/common.js"></script>
+<script>
+    var stompClient = null;
+    //防止乱码
+    $.base64.utf8encode = true;
+    var fileReader = new FileReader();
+    var vm = new Vue({
+        el: "#app",
+        data: {
+            dialogVisible:true,//控制登录框是否显示
+            cUserNmae:'',//当前登录人
+            cUserOnline:false,
+            activeName:-1,//当前对话人tab
+            users:[{name:'机器人',online:true},{name:'王朝',online:false},{name:'马汉',online:false},{name:'张龙',online:false},{name:'赵虎',online:false},{name:'包青天',online:false}],
+            chatUsers:[],//当前对话人列表 每个对话下面又含有互相之前的消息列表
+            manyUser:[] //临时组的用户
+        },
+        mounted: function () {
+           //this.init();
+        },
+        filters: {
+            <!--TO base解密过滤器 过滤器在v-html里不能用，所以换全局方法 停用-->
+            formatContent: function (c) {
+                return $.base64.atob(c, true);
+            }
+        },
+        methods: {
+                //重新获取所有人的状态
+                init:function () {
+                    $.ajax({
+                        type: "GET",
+                        url: "/userlist",
+                        dataType: "json",
+                        success: function (json) {
+                            if(json){
+                                //初始化在线状态
+                                for(var i=0;i<json.length;i++){
+                                    var a=  vm.users.filter(function (val) {
+                                        return val.name == json[i].name;
+                                    })[0];
+                                    a.online=json[i].online;
+                                }
+                            }
+                            //vm.users=json;
+                        },
+                        error:function (json) {
+                            alert(json);
+                        }
+
+                    });
+                },
+                //更新指定人的状态
+                reloadUser:function (user) {
+                    <!--TO 使用filter过滤出指定的json数组之一 -->
+                        var a=  vm.users.filter(function (val) {
+                            return val.name == user.name;
+                        })[0];
+                        a.online=user.online;
+                },
+               //注销退出
+                dislogin: function() {
+                    if (stompClient !== null) {
+                        stompClient.disconnect();
+                    }
+                    for(var i=0;i<vm.users.length;i++){
+                        if(vm.users[i].name!='机器人')
+                        vm.users[i].online=false;
+                    }
+                    this.chatUsers=[];
+                    this.manyUser=[];
+                    this.dialogVisible = true;//登录注销
+                },
+               //登录
+                login: function() {
+                    $.ajax({
+                        type: "POST",
+                        url: "/login",
+                        data: {username: this.cUserNmae},
+                        success: function () {
+                            <!--TO 创建socket连接 并订阅相关频道-->
+                            var socket = new SockJS('/im-websocket');
+                            stompClient = Stomp.over(socket);
+                            //设置stomp 控制台日志为不输出
+                            stompClient.debug=null;
+                            stompClient.connect({}, function (frame) {
+                                vm.init();
+                                vm.cUserOnline=true;
+                                // 相当于连接 ws://localhost:8080/gs-guide-websocket/041/hk5tax0r/websocket hk5tax0r就是sessionid
+                                console.log("正在连接",socket._transport.url);
+                                //订阅通用私聊频道 群组也通过这里实现
+                                stompClient.subscribe('/user/topic/private', function (greeting) {
+                                    pageMessage.show();//浏览器顶部提醒
+                                    //console.log("订阅实时返回",greeting);
+                                    var message = JSON.parse(greeting.body);
+                                    var fromuser='';
+                                    var manyChatType=false;
+                                    if(message.receiver.indexOf(',')>-1){
+                                        fromuser=message.receiver;//群对象
+                                        manyChatType=true;
+                                    }else {
+                                        fromuser=message.name;//单聊对象
+                                    }
+                                    //判断是否正在跟他聊天
+                                    var ifdeal=true;
+                                    $.each(vm.chatUsers,function (index,item) {
+                                        if(item.name==fromuser)
+                                        {
+                                            vm.chatUsers[index].messages.push(message);
+                                            ifdeal=false;
+                                            if(vm.activeName!=fromuser){//未打开的提示红色
+                                                vm.chatUsers[index].newNum= vm.chatUsers[index].newNum+1;
+                                            }
+                                        }
+                                    })
+                                    //否则添加正在聊天的人
+                                    if(ifdeal){
+                                        var a={};
+                                        if(manyChatType){
+                                           a.name=fromuser;
+                                        }else{
+                                            a.name=fromuser;
+                                        }
+                                        var messages=[];
+                                        messages.push(message);
+                                        a.messages=messages;
+                                        if(vm.chatUsers.length==0){
+                                            a.newNum=0;
+                                           vm.activeName=fromuser;//默认打开
+                                        }
+                                        else{
+                                            a.newNum=1;
+                                        }
+                                        vm.chatUsers.push(a);
+                                    }
+                                    vm.$forceUpdate();//vue不能自动识别多层嵌套的json数据变化，需要强制检测数据变化
+                                }
+                               );
+                                //订阅用户上线下线的公共频道
+                                stompClient.subscribe('/topic/userlist', function (greeting) {
+                                    var otherUser=JSON.parse(greeting.body);//其他用户上线了
+                                    console.log("上线了",otherUser.name);
+                                    var textMessage="";
+                                    if(otherUser.online){
+                                        textMessage=otherUser.name+'刚刚上线了';
+                                    }else{
+                                        textMessage=otherUser.name+'刚刚下线了';
+                                    }
+                                    vm.$notify({
+                                        title: '通知',
+                                        message: textMessage,
+                                        position: 'bottom-right',
+                                        duration:1000
+                                    });
+                                    vm.reloadUser(otherUser);
+                                });
+                            },function errorCallBack (error) {
+                                // 连接失败时（服务器响应 ERROR 帧）的回调方法
+                                vm.$notify({
+                                    title: '通知',
+                                    message: '连接失败',
+                                    position: 'bottom-right',
+                                    duration:1000
+                                });
+                            });
+                            vm.dialogVisible = false;//登录成功
+                        },
+                        error:function (json) {
+                            //账号重复登录
+                            vm.$notify({
+                                title: '通知',
+                                message: '账号已登录',
+                                position: 'bottom-right',
+                                duration:1000
+                            });
+                    }
+                });
+            },
+            //选取指定人单聊
+            privateChatSel: function(user,index) {
+                this.activeName=user.name;
+                var ifdeal=true;
+                user.newNum=0;//最新消息数量
+                $.each(this.chatUsers,function (index,item) {
+                    if(item.name==user.name)
+                    {
+                        ifdeal=false;
+                    }
+                })
+                if(ifdeal)
+                {
+                    user.messages=[];
+                    this.chatUsers.push(user);
+                    //this.chatUsers[index].messages=[];
+                }
+            },
+            //发送
+            sendOne: function(index) {
+                //原input换成自实现的div富文本框， 没有vue双向绑定事件了
+                //补充base64加密，解决富文本传输问题
+                var thisMessage=document.getElementById("editor"+index).innerHTML;
+                var thisMessageBase=thisMessage;
+                if(this.activeName!='机器人'){
+                 thisMessageBase= $.base64.btoa(thisMessage);//使用插件base64编码
+                /*console.log(thisMessageBase);
+                console.log($.base64.atob(thisMessageBase,true));*/
+                }
+                this.chatUsers[index].content=thisMessage;
+                var message={};
+                message.name=this.cUserNmae;
+                //message.content= this.chatUsers[index].content;
+                message.content=thisMessageBase;
+                message.receiver=this.chatUsers[index].name;
+                var myDate = new Date();
+                var mytime=myDate.toLocaleTimeString();     //获取当前时间
+                message.date=mytime;
+                this.chatUsers[index].messages.push(message);
+                this.$forceUpdate();//多层嵌套强制检测数据变化
+                //第一个参数对应controller的 @MessageMapping注解 /app为后台定义的通用前缀
+                //第三个参数为内容字符串
+                stompClient.send("/app/private", {}, JSON.stringify(message));//发送服务器
+            },
+            //建立群组
+            manyChatSel:function () {
+                var manyUser=this.manyUser;
+                if(!manyUser||manyUser.length==0){
+                    this.$message('请选择用户创建群组');
+                    return;
+                }
+                if(manyUser){
+                    var menu_node1 = manyUser.filter(function (e) { return e.name == '张龙'; });
+                    var manyChatName=this.cUserNmae;
+                    for(j = 0; j < manyUser.length; j++) {
+                        manyChatName=manyChatName+','+manyUser[j]
+                    }
+                    this.activeName=manyChatName;
+                    var ifdeal=true;
+                    var user={};
+                    user.newNum=0;//最新消息数量
+                    $.each(this.chatUsers,function (index,item) {
+                        if(item.name==manyChatName)
+                        {
+                            ifdeal=false;
+                        }
+                    })
+                    if(ifdeal)
+                    {
+                        user.messages=[];
+                        user.name=manyChatName;//暂时没考虑顺序导致的组重复问题
+                        this.chatUsers.push(user);
+                        //this.chatUsers[index].messages=[];
+                    }
+                }
+            },
+            //自行实现的关闭tab
+            closeChat:function (chatUser) {
+                   $.each(this.chatUsers,function (index,item) {
+                    if(item.name==chatUser.name)
+                    {
+                        //this.chatUsers.deleteIndex(index);
+                        vm.chatUsers.splice(index, 1);
+                        if(vm.activeName==chatUser.name&&index>0)//关闭当前，不是第一个
+                        vm.activeName=vm.chatUsers[index-1].name;
+                        document.getElementById("tab-"+vm.activeName).click();//自动点击前面的tab
+                    }
+                });
+            },
+            //tab 切换
+            handleTabClick:function (tab, event) {
+               // console.log(tab);
+                $.each(this.chatUsers,function (index,item) {
+                    if(item.name==tab.name)
+                    {
+                        item.newNum=0;
+                    }
+                })
+                this.$forceUpdate();//多层嵌套强制检测数据变化
+            },
+            //表情插入 此处仅仅实现一个图片，可扩展实现多个，主要需要考虑焦点丢失问题
+            emojiTest:function (index) {
+                //document.getElementById('editor').focus();
+                var h='<img src="/images/em1.png">';
+                _insertimg(h,index)
+            },
+            //绑定的动态循环ID
+            getEditorId:function (index) {
+                return "editor"+index;
+            },
+            //绑定的动态循环ID
+            getFileId:function (index) {
+                return "file"+index;
+            },
+            //上传图片 base64转码 目前大小1M以内，后续可以考虑通过cavans压缩
+            fileC:function (index) {
+                // 获取文件列表
+                var filec=$("#file"+index);
+                if (filec&&filec.length>0) {
+                    var fileList = filec[0].files;
+                    if(!/image\/\w+/.test(fileList[0].type))            //判断获取的是否为图片文件
+                    {
+                        this.$message.error('请确保文件为图像文件');
+                        //清空input 可以再次上传并触发onchange
+                        filec.val('')
+                        return false;
+                    }
+                    if(fileList[0].size>1048576){
+                        this.$message.error('请确保图片不大于1M');
+                        //清空input 可以再次上传并触发onchange
+                        filec.val('')
+                        return false;
+                    }
+                    fileReader.onload = function (e) {
+                        // 获取扩展名
+                       /* var extensionName = fileList[0].name.split('.');
+                        extensionName = extensionName[extensionName.length - 1];*/
+                        // 获取文件的base64编码
+                        var base64 = e.target.result;
+                        // 将读取 文件放置到一个img标签
+                        $('#tempimg').attr('src', base64);
+                        var image = new Image();
+                        image.src = base64;
+                        image.onload = function() {
+                            //文件像素过大，调整为稍小的
+                            var newW="";var newH="";
+                            if(this.width>this.height&&this.width>200){
+                                newW=200;
+                                newH=200/this.width*this.height;
+                            }
+                            if(this.width<=this.height&&this.height>200){
+                                newH=200;
+                                newW=200/this.height*this.width;
+                            }
+                            var h = '<img src=' + base64 + ' width='+newW+' height='+newH+'>';
+                            _insertimg(h, index)//插入到富文本对应的位置
+                        };
+                    }
+                    fileReader.readAsDataURL(fileList[0]);
+            }
+          },
+        },
+        //结束方法集合
+        //watch监听数据变化
+        watch: {
+            'activeName': function(newVal,oldVal){
+                if(oldVal!=-1){
+                    var Zindex=0;
+                    $.each(this.chatUsers,function (index,item) {
+                        if(item.name==newVal){
+                        Zindex=index;
+                        }
+                    });
+                    //等待dom更新再执行设置 默认设置焦点到富文本框
+                    Vue.nextTick()
+                        .then(function () {
+                            var el= document.getElementById('editor'+Zindex);
+                            el.focus();
+                            _updateFocusLast(el);
+                        })
+                }
+            }
+        }
+    })
+    //全局方法 代替filter base64转码接收的消息
+    Vue.prototype.formatContent= function (c) {
+        return $.base64.atob(c, true);
+    };
+    //全局指令 idv 默认焦点 只可以解决新生成的焦点问题 切换通过上面的watch解决
+    Vue.directive('focus', {
+        // 当被绑定的元素插入到 DOM 中时……
+        inserted: function (el) {
+            // 聚焦元素
+            el.focus()
+        }
+    })
+
+</script>
+</html>
