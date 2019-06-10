@@ -16,5 +16,7 @@
 2、前端展示涉及的jquery、vue、elementUI、jquerybase64js
 3、后端springboot、jsoup、spring-security、spring-websocket
 
+![首页](https://segmentfault.com/img/bVbtBH4?w=1361&h=726)
+
 文章链接
 https://segmentfault.com/a/1190000019410493?_ea=12573280
